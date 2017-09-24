@@ -216,10 +216,8 @@ class WatchdogMiddleware(object):
         try:
             frame = sys._current_frames()[thread_id]
 
-            req_string = '%s %s://%s%s' % (
+            req_string = '%s %s' % (
                 request.META.get('REQUEST_METHOD'),
-                request.META.get('wsgi.url_scheme', 'http'),
-                request.META.get('HTTP_HOST'),
                 request.META.get('PATH_INFO'),
             )
             if request.META.get('QUERY_STRING', ''):
