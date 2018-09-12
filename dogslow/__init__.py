@@ -124,9 +124,8 @@ class WatchdogMiddleware(object):
         # if this is not going to Sentry,
         # then we'll use the original msg
         if not log_to_sentry:
-            msg = 'Slow Request Watchdog: %s, %s - %s' % (
-                resolve(request.META.get('PATH_INFO')).url_name,
-                req_string.encode('utf-8'),
+            msg = 'Slow Request Watchdog: %s - %s' % (
+                req_string,
                 output
             )
 
@@ -209,7 +208,7 @@ class WatchdogMiddleware(object):
             output += 'Full backtrace with local variables:'
             output += '\n\n'
             output += stack(frame, with_locals=True)
-        return output.encode('utf-8', errors=encoding_error_handler)
+        return output
 
     @staticmethod
     def peek(request, thread_id, started):
