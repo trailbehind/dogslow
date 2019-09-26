@@ -2,6 +2,7 @@ import codecs
 import datetime as dt
 import inspect
 import logging
+import threading
 import os
 import pprint
 import socket
@@ -16,7 +17,11 @@ import linecache
 from django.conf import settings
 from django.core.exceptions import MiddlewareNotUsed
 from django.core.mail.message import EmailMessage
-from django.core.urlresolvers import resolve, Resolver404
+try:
+    from django.core.urlresolvers import resolve, Resolver404
+except ImportError:
+    # Django 2.0
+    from django.urls import resolve, Resolver404
 
 from dogslow.timer import Timer
 
@@ -100,14 +105,18 @@ def stack(f, with_locals=False):
 
 class WatchdogMiddleware(object):
 
-    def __init__(self):
+    def __init__(self, get_response=None):
         if not getattr(settings, 'DOGSLOW', True):
             raise MiddlewareNotUsed
         else:
+            self.get_response = get_response
             self.interval = int(getattr(settings, 'DOGSLOW_TIMER', 25))
-            self.timer = Timer()
-            self.timer.setDaemon(True)
-            self.timer.start()
+            # Django 1.10+ inits middleware when application starts
+            # (it used to do this only when the first request is served).
+            # uWSGI pre-forking prevents the timer from working properly
+            # so we have to postpone the actual thread initialization
+            self.timer = None
+            self.timer_init_lock = threading.Lock()
 
     @staticmethod
     def _log_to_custom_logger(logger_name, frame, output, req_string, request):
@@ -262,12 +271,23 @@ class WatchdogMiddleware(object):
 
     def process_request(self, request):
         if not self._is_exempt(request):
+            self._ensure_timer_initialized()
+
             request.dogslow = self.timer.run_later(
                 WatchdogMiddleware.peek,
                 self.interval,
                 request,
                 thread.get_ident(),
                 dt.datetime.utcnow())
+
+    def _ensure_timer_initialized(self):
+        if not self.timer:
+            with self.timer_init_lock:
+                # Double-checked locking reduces lock acquisition overhead
+                if not self.timer:
+                    self.timer = Timer()
+                    self.timer.setDaemon(True)
+                    self.timer.start()
 
     def _cancel(self, request):
         try:
@@ -283,3 +303,11 @@ class WatchdogMiddleware(object):
 
     def process_exception(self, request, exception):
         self._cancel(request)
+        
+    def __call__(self, request):
+        self.process_request(request)
+
+        response = self.get_response(request)
+
+        return self.process_response(request, response)
+
